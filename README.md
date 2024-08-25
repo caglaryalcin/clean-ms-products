@@ -25,7 +25,7 @@ This script does exactly the following.
 
 ####
 > [!NOTE]  
-> This script takes about 60 minutes with 100mbps internet.
+> This script takes about 40-60 seconds.
 
 > [!IMPORTANT]  
 > Powershell must be run as admin
