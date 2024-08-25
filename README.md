@@ -20,3 +20,17 @@ This script does exactly the following.
 - Removes CoPilot
 - Removes OneDrive
 - Removes Edge
+
+## Start the script
+
+####
+> [!NOTE]  
+> This script takes about 60 minutes with 100mbps internet.
+
+> [!IMPORTANT]  
+> Powershell must be run as admin
+<br />
+
+```powershell
+iwr "del-ms.caglaryalcin.com" -UseB | iex
+```
