@@ -746,20 +746,6 @@ Function UnusedApps {
 
     UninstallEdge
 
-    Function Removelnks {
-        Write-Host "Removing Desktop shortcuts..." -NoNewline
-        try {
-            Get-ChildItem C:\users\Public\Desktop\*.lnk | ForEach-Object { Remove-Item $_ -ErrorAction SilentlyContinue } *>$null
-            Get-ChildItem $env:USERPROFILE\Desktop\*.lnk | ForEach-Object { Remove-Item $_ -ErrorAction SilentlyContinue } *>$null
-            Get-ChildItem -Path "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp" -Force | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-            Write-Host "[DONE]" -ForegroundColor Green -BackgroundColor Black
-        }
-        catch {
-            Write-Host "[WARNING] $_" -ForegroundColor Red -BackgroundColor Black
-        }
-    }
-
-    Removelnks
 }
 
 UnusedApps
