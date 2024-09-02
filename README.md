@@ -22,6 +22,8 @@ This script does exactly the following.
 - Removes Edge
 
 ## Start the script
+> [!WARNING]  
+> Great care went into making sure this script does not unintentionally break any OS functionality, but use at your own risk!
 
 ####
 > [!NOTE]  
