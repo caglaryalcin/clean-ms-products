@@ -25,7 +25,7 @@ This script does exactly the following.
 
 ####
 > [!NOTE]  
-> This script takes about 40-60 seconds.
+> This script takes about 5 minutes.
 
 > [!IMPORTANT]  
 > Powershell must be run as admin
