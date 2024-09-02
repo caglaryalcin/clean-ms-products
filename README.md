@@ -25,7 +25,6 @@ This script does exactly the following.
 > [!WARNING]  
 > Great care went into making sure this script does not unintentionally break any OS functionality, but use at your own risk!
 
-####
 > [!NOTE]  
 > This script takes about 5 minutes.
 
