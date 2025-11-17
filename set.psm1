@@ -722,7 +722,9 @@ Function UnusedApps {
                 $edgeAppXKey = (Get-Item -Path $pattern -EA 0).PSChildName
                 if (Test-Path "$pattern") { reg delete "HKLM$appxStore\InboxApplications\$edgeAppXKey" /f 2>$null | Out-Null }
 
-                New-Item -Path "HKLM:$appxStore\EndOfLife\$SID\Microsoft.MicrosoftEdge_8wekyb3d8bbwe" -Force -EA 0 | Out-Null
+                if (-not (Test-Path "HKLM:$appxStore\EndOfLife\$SID\Microsoft.MicrosoftEdge_8wekyb3d8bbwe")) {
+                    New-Item -Path "HKLM:$appxStore\EndOfLife\$SID\Microsoft.MicrosoftEdge_8wekyb3d8bbwe" -Force -EA 0 | Out-Null
+                }
                 Get-AppxPackage -Name Microsoft.MicrosoftEdge -EA 0 | Remove-AppxPackage -EA 0 | Out-Null
                 Remove-Item -Path "HKLM:$appxStore\EndOfLife\$SID\Microsoft.MicrosoftEdge_8wekyb3d8bbwe" -Force -EA 0 | Out-Null
             }
