@@ -91,14 +91,19 @@ function Add-CleanMsResult {
 }
 
 $script:CleanMsStepActive = $false
+$script:CleanMsStepHadWarning = $false
 
 function Complete-CleanMsStep {
     if (-not $script:CleanMsStepActive) {
         return
     }
 
-    Write-Host '[DONE]' -ForegroundColor Green -BackgroundColor Black
+    if (-not $script:CleanMsStepHadWarning) {
+        Write-Host '[DONE]' -ForegroundColor Green -BackgroundColor Black
+    }
+
     $script:CleanMsStepActive = $false
+    $script:CleanMsStepHadWarning = $false
 }
 
 function Write-CleanMsStep {
@@ -107,10 +112,16 @@ function Write-CleanMsStep {
     Complete-CleanMsStep
     Write-Host $Message -NoNewline
     $script:CleanMsStepActive = $true
+    $script:CleanMsStepHadWarning = $false
 }
 
 function Write-CleanMsWarning {
     param([Parameter(Mandatory = $true)][string]$Message)
+
+    if ($script:CleanMsStepActive) {
+        $script:CleanMsStepHadWarning = $true
+    }
+
     Write-Host "[WARNING] $Message" -ForegroundColor Red -BackgroundColor Black
 }
 
@@ -1830,6 +1841,7 @@ function Invoke-CleanMsProducts {
     $dryRun = [bool]$WhatIfPreference
     $results = New-Object System.Collections.ArrayList
     $script:CleanMsStepActive = $false
+    $script:CleanMsStepHadWarning = $false
 
     if (-not $SkipApps) {
         Write-CleanMsStep 'Removing selected AppX packages for existing and future users...'
