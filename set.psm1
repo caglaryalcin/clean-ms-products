@@ -1214,6 +1214,323 @@ function Remove-CleanMsEdgeScheduledTasks {
     }
 }
 
+function Remove-CleanMsLegacyEdgeAppx {
+    param(
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)][System.Collections.IList]$ResultList,
+        [Parameter(Mandatory = $true)][bool]$DryRun
+    )
+
+    $step = 'Legacy Edge AppX'
+    $packageName = 'Microsoft.MicrosoftEdge'
+    try {
+        $packages = @(Get-AppxPackage -AllUsers -Name $packageName -ErrorAction Stop)
+    }
+    catch {
+        Write-CleanMsWarning "Could not enumerate the legacy Edge AppX package. $($_.Exception.Message)"
+        Add-CleanMsResult -ResultList $ResultList -Step $step -Target $packageName -Status Failed -Detail $_.Exception.Message
+        return
+    }
+
+    if ($packages.Count -eq 0) {
+        Add-CleanMsResult -ResultList $ResultList -Step $step -Target $packageName -Status Skipped -Detail 'The legacy Edge AppX package was not installed.'
+        return
+    }
+
+    if (-not $Context.ShouldProcess($packageName, 'Force-remove the legacy Edge AppX registration, inbox entry, and provisioning')) {
+        $status = if ($DryRun) { 'Planned' } else { 'Skipped' }
+        Add-CleanMsResult -ResultList $ResultList -Step $step -Target $packageName -Status $status
+        return
+    }
+
+    $appxStorePath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore'
+    $inboxApplicationsPath = Join-Path $appxStorePath 'InboxApplications'
+    $familyName = 'Microsoft.MicrosoftEdge_8wekyb3d8bbwe'
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $endOfLifePath = Join-Path $appxStorePath "EndOfLife\$currentSid\$familyName"
+    $createdEndOfLifeMarker = $false
+
+    try {
+        $inboxKeys = @(Get-ChildItem -Path $inboxApplicationsPath -ErrorAction SilentlyContinue | Where-Object {
+                $_.PSChildName -like 'Microsoft.MicrosoftEdge_*_neutral__8wekyb3d8bbwe'
+            })
+        foreach ($inboxKey in $inboxKeys) {
+            Remove-Item -LiteralPath $inboxKey.PSPath -Recurse -Force -ErrorAction Stop
+        }
+
+        if (-not (Test-Path -LiteralPath $endOfLifePath)) {
+            New-Item -Path $endOfLifePath -Force -ErrorAction Stop | Out-Null
+            $createdEndOfLifeMarker = $true
+        }
+
+        $removalErrors = New-Object System.Collections.ArrayList
+        foreach ($package in $packages) {
+            try {
+                Remove-AppxPackage -Package $package.PackageFullName -AllUsers -ErrorAction Stop
+            }
+            catch {
+                [void]$removalErrors.Add($_.Exception.Message)
+            }
+        }
+
+        foreach ($package in @(Get-AppxPackage -Name $packageName -ErrorAction SilentlyContinue)) {
+            try {
+                Remove-AppxPackage -Package $package.PackageFullName -ErrorAction Stop
+            }
+            catch {
+                [void]$removalErrors.Add($_.Exception.Message)
+            }
+        }
+
+        foreach ($package in @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object {
+                    $_.DisplayName -eq $packageName
+                })) {
+            try {
+                Remove-AppxProvisionedPackage -Online -PackageName $package.PackageName -AllUsers -ErrorAction Stop | Out-Null
+            }
+            catch {
+                [void]$removalErrors.Add($_.Exception.Message)
+            }
+        }
+
+        $remainingPackages = @(Get-AppxPackage -AllUsers -Name $packageName -ErrorAction SilentlyContinue)
+        if ($remainingPackages.Count -gt 0) {
+            $detail = "Legacy Edge AppX registrations remain: $($remainingPackages.PackageFullName -join ', ')."
+            if ($removalErrors.Count -gt 0) {
+                $detail += " Attempts: $($removalErrors -join ' | ')"
+            }
+            throw $detail
+        }
+
+        Add-CleanMsResult -ResultList $ResultList -Step $step -Target $packageName -Status Changed -Detail 'Removed the legacy package, inbox registration, and provisioning entry.'
+    }
+    catch {
+        Write-CleanMsWarning "Could not fully remove the legacy Edge AppX package. $($_.Exception.Message)"
+        Add-CleanMsResult -ResultList $ResultList -Step $step -Target $packageName -Status Failed -Detail $_.Exception.Message
+    }
+    finally {
+        if ($createdEndOfLifeMarker) {
+            Remove-Item -LiteralPath $endOfLifePath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Remove-CleanMsPerUserEdge {
+    param(
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)][System.Collections.IList]$ResultList,
+        [Parameter(Mandatory = $true)][bool]$DryRun
+    )
+
+    $step = 'Per-user Edge removal'
+    $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    if ([string]::IsNullOrWhiteSpace($localAppData)) {
+        Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Per-user Microsoft Edge' -Status Skipped -Detail 'LOCALAPPDATA could not be resolved.'
+        return
+    }
+
+    $installations = New-Object System.Collections.ArrayList
+    $detectedAnyBrowser = $false
+    foreach ($relativeApplicationPath in @('Microsoft\Edge\Application', 'Microsoft\Edge SxS\Application')) {
+        $applicationRoot = Join-Path $localAppData $relativeApplicationPath
+        $rootBrowserPath = Join-Path $applicationRoot 'msedge.exe'
+        $browserPaths = New-Object System.Collections.ArrayList
+        $rootBrowserExists = Test-Path -LiteralPath $rootBrowserPath -PathType Leaf
+        if ($rootBrowserExists) {
+            $detectedAnyBrowser = $true
+            [void]$browserPaths.Add($rootBrowserPath)
+        }
+
+        $candidates = New-Object System.Collections.ArrayList
+        foreach ($versionDirectory in Get-ChildItem -Path $applicationRoot -Directory -ErrorAction SilentlyContinue) {
+            $versionBrowserPath = Join-Path $versionDirectory.FullName 'msedge.exe'
+            $setupPath = Join-Path $versionDirectory.FullName 'Installer\setup.exe'
+            $browserPath = if ($rootBrowserExists) {
+                $rootBrowserPath
+            }
+            elseif (Test-Path -LiteralPath $versionBrowserPath -PathType Leaf) {
+                $versionBrowserPath
+            }
+            else {
+                $null
+            }
+
+            if ($null -eq $browserPath) {
+                continue
+            }
+            $detectedAnyBrowser = $true
+            if ($browserPaths -notcontains $browserPath) {
+                [void]$browserPaths.Add($browserPath)
+            }
+            if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
+                continue
+            }
+
+            [version]$parsedVersion = [version]'0.0'
+            [void][version]::TryParse($versionDirectory.Name, [ref]$parsedVersion)
+            [void]$candidates.Add([pscustomobject]@{
+                    Version   = $parsedVersion
+                    SetupPath = $setupPath
+                })
+        }
+
+        if ($browserPaths.Count -eq 0) {
+            continue
+        }
+
+        $installer = $candidates | Sort-Object -Property @{ Expression = { $_.Version }; Descending = $true } | Select-Object -First 1
+        [void]$installations.Add([pscustomobject]@{
+                ApplicationRoot = $applicationRoot
+                BrowserPaths    = @($browserPaths)
+                Installer       = $installer
+            })
+    }
+
+    if (-not $detectedAnyBrowser) {
+        Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Per-user Microsoft Edge' -Status Skipped -Detail 'No per-user Edge browser was detected.'
+        return
+    }
+
+    foreach ($installation in $installations) {
+        $installer = $installation.Installer
+        if ($null -eq $installer) {
+            $detail = "A per-user Edge browser exists under $($installation.ApplicationRoot), but setup.exe was not found."
+            Write-CleanMsWarning $detail
+            Add-CleanMsResult -ResultList $ResultList -Step $step -Target $installation.ApplicationRoot -Status Failed -Detail $detail
+            continue
+        }
+
+        try {
+            Assert-CleanMsMicrosoftSignature -LiteralPath $installer.SetupPath
+        }
+        catch {
+            $detail = "Per-user Edge setup.exe trust verification failed. $($_.Exception.Message)"
+            Write-CleanMsWarning $detail
+            Add-CleanMsResult -ResultList $ResultList -Step $step -Target $installer.SetupPath -Status Failed -Detail $detail
+            continue
+        }
+
+        $browserTarget = $installation.BrowserPaths -join ', '
+        if (-not $Context.ShouldProcess($browserTarget, 'Run the signed per-user Edge setup with force-removal fallbacks')) {
+            $status = if ($DryRun) { 'Planned' } else { 'Skipped' }
+            Add-CleanMsResult -ResultList $ResultList -Step $step -Target $browserTarget -Status $status -Detail 'Per-user force-uninstall with AllowUninstall, WINDIR, FR/84 region, and protected region-policy fallbacks.'
+            continue
+        }
+
+        try {
+            Invoke-CleanMsWithGlobalMutex -Name 'Global\CleanMsProductsEdgeRemoval' -Action {
+                $uninstallCommand = '"{0}" --uninstall --msedge --user-level --verbose-logging --force-uninstall' -f $installer.SetupPath
+                $attemptNames = @(
+                    'direct signed per-user setup'
+                    'temporary EdgeUpdateDev AllowUninstall'
+                    'temporary machine/process WINDIR'
+                    'temporary default-user FR/84 region'
+                    'temporary System32/SysWOW64 IntegratedServicesRegionPolicySet.json and ACL'
+                )
+                $attemptErrors = New-Object System.Collections.ArrayList
+                $successfulAttempt = $null
+                $restartRequested = $false
+                $fatalRollbackError = $null
+                $fatalTrustError = $null
+                $remainingBrowserPaths = @($installation.BrowserPaths | Where-Object {
+                        Test-Path -LiteralPath $_ -PathType Leaf
+                    })
+
+                foreach ($attemptName in $attemptNames) {
+                    if ($remainingBrowserPaths.Count -eq 0 -or $restartRequested) {
+                        break
+                    }
+
+                    try {
+                        if (-not (Test-Path -LiteralPath $installer.SetupPath -PathType Leaf)) {
+                            throw "Per-user Edge setup.exe disappeared before $attemptName."
+                        }
+                        Assert-CleanMsMicrosoftSignature -LiteralPath $installer.SetupPath
+                    }
+                    catch {
+                        $fatalTrustError = $_.Exception.Message
+                        [void]$attemptErrors.Add("$attemptName trust check: $fatalTrustError")
+                        break
+                    }
+
+                    try {
+                        Stop-Process -Name msedge -Force -ErrorAction SilentlyContinue
+                        $invokeInstaller = {
+                            Invoke-CleanMsUninstallCommand -CommandLine $uninstallCommand -DisplayName 'Per-user Microsoft Edge' -ExpectedFileName 'setup.exe' -AllowedRootPath @($installation.ApplicationRoot) -RequireMicrosoftSignature
+                        }
+
+                        switch ($attemptName) {
+                            'direct signed per-user setup' {
+                                $exitCode = & $invokeInstaller
+                            }
+                            'temporary EdgeUpdateDev AllowUninstall' {
+                                $exitCode = Invoke-CleanMsEdgeWithTemporaryAllowUninstall -Action $invokeInstaller
+                            }
+                            'temporary machine/process WINDIR' {
+                                $exitCode = Invoke-CleanMsEdgeWithTemporaryWindir -Action $invokeInstaller
+                            }
+                            'temporary default-user FR/84 region' {
+                                $exitCode = Invoke-CleanMsEdgeWithTemporaryEuRegion -Action $invokeInstaller
+                            }
+                            'temporary System32/SysWOW64 IntegratedServicesRegionPolicySet.json and ACL' {
+                                $exitCode = Invoke-CleanMsEdgeWithTemporaryRegionPolicy -Action $invokeInstaller
+                            }
+                        }
+
+                        if ($exitCode -eq 3010) {
+                            $restartRequested = $true
+                        }
+                    }
+                    catch {
+                        [void]$attemptErrors.Add("$attemptName`: $($_.Exception.Message)")
+                        if ($_.Exception.Data.Contains('CleanMsRollbackFailure')) {
+                            $fatalRollbackError = $_.Exception.Message
+                        }
+                    }
+
+                    $remainingBrowserPaths = @($installation.BrowserPaths | Where-Object {
+                            Test-Path -LiteralPath $_ -PathType Leaf
+                        })
+                    if ($remainingBrowserPaths.Count -eq 0 -and $null -eq $fatalRollbackError) {
+                        $successfulAttempt = $attemptName
+                    }
+                    if ($null -ne $fatalRollbackError) {
+                        break
+                    }
+                }
+
+                if ($null -ne $fatalRollbackError) {
+                    Write-CleanMsWarning "Per-user Edge temporary state could not be fully restored. $fatalRollbackError"
+                    Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Per-user Edge rollback' -Status Failed -Detail $fatalRollbackError
+                }
+                elseif ($null -ne $fatalTrustError) {
+                    Write-CleanMsWarning "Per-user Edge setup trust changed during removal. $fatalTrustError"
+                    Add-CleanMsResult -ResultList $ResultList -Step $step -Target $installer.SetupPath -Status Failed -Detail $fatalTrustError
+                }
+                elseif ($remainingBrowserPaths.Count -eq 0) {
+                    Add-CleanMsResult -ResultList $ResultList -Step $step -Target $installation.ApplicationRoot -Status Changed -Detail "Removed with: $successfulAttempt."
+                    Remove-CleanMsEdgeScheduledTasks -Context $Context -ResultList $ResultList -DryRun $DryRun
+                }
+                elseif ($restartRequested) {
+                    Add-CleanMsResult -ResultList $ResultList -Step $step -Target $installation.ApplicationRoot -Status RestartRequired -Detail "The uninstaller requested a restart; files remain at: $($remainingBrowserPaths -join ', ')."
+                }
+                else {
+                    $detail = "Per-user Edge files remain at: $($remainingBrowserPaths -join ', ')."
+                    if ($attemptErrors.Count -gt 0) {
+                        $detail += " Attempts: $($attemptErrors -join ' | ')"
+                    }
+                    Write-CleanMsWarning $detail
+                    Add-CleanMsResult -ResultList $ResultList -Step $step -Target $installation.ApplicationRoot -Status Failed -Detail $detail
+                }
+            } | Out-Null
+        }
+        catch {
+            Write-CleanMsWarning "Could not start the serialized per-user Edge removal sequence. $($_.Exception.Message)"
+            Add-CleanMsResult -ResultList $ResultList -Step $step -Target $installation.ApplicationRoot -Status Failed -Detail $_.Exception.Message
+        }
+    }
+}
+
 function Remove-CleanMsEdge {
     param(
         [Parameter(Mandatory = $true)]$Context,
@@ -1284,14 +1601,18 @@ function Remove-CleanMsEdge {
 
     if ($null -eq $installer) {
         if ($detectedBrowserPaths.Count -gt 0) {
-            Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Microsoft Edge' -Status Failed -Detail 'The machine-wide Edge browser exists, but no trusted Edge setup.exe was found. WebView2 was not considered a target.'
+            $detail = 'The machine-wide Edge browser exists, but no trusted Edge setup.exe was found. WebView2 was not considered a target.'
+            Write-CleanMsWarning $detail
+            Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Microsoft Edge' -Status Failed -Detail $detail
         }
         else {
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Microsoft Edge' -Status Skipped -Detail 'No machine-wide Edge browser was detected. WebView2 was not considered an Edge browser target.'
         }
     }
     elseif ($null -ne $installerTrustError) {
-        Add-CleanMsResult -ResultList $ResultList -Step $step -Target $installer.SetupPath -Status Failed -Detail "Deep removal was not attempted because setup.exe trust verification failed. $installerTrustError"
+        $detail = "Deep removal was not attempted because setup.exe trust verification failed. $installerTrustError"
+        Write-CleanMsWarning $detail
+        Add-CleanMsResult -ResultList $ResultList -Step $step -Target $installer.SetupPath -Status Failed -Detail $detail
     }
     elseif (-not $Context.ShouldProcess($installer.BrowserPath, 'Run the signed Edge setup with AllowUninstall, WINDIR, EU-region, and protected-policy force-removal fallbacks')) {
         $status = if ($DryRun) { 'Planned' } else { 'Skipped' }
@@ -1414,6 +1735,9 @@ function Remove-CleanMsEdge {
         }
     }
 
+    Remove-CleanMsPerUserEdge -Context $Context -ResultList $ResultList -DryRun $DryRun
+    Remove-CleanMsLegacyEdgeAppx -Context $Context -ResultList $ResultList -DryRun $DryRun
+
     # These documented Edge Update values are also written as a best-effort reinstall block.
     # Microsoft only guarantees policy enforcement on the editions and join states in its policy documentation.
     $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate'
@@ -1433,8 +1757,10 @@ function Invoke-CleanMsProducts {
         Edge setup and, while Edge remains installed, retries with temporary EdgeUpdateDev
         AllowUninstall, WINDIR, FR/84 default-region, and System32/SysWOW64
         IntegratedServicesRegionPolicySet.json/ACL overrides. Those values, bytes, and ACLs
-        are restored in finally blocks. After confirmed browser removal it
-        unregisters allowlisted Edge Update tasks. SkipEdge disables the entire Edge sequence.
+        are restored in finally blocks. The same force-removal chain covers the current user's
+        LOCALAPPDATA installation, and the legacy Microsoft.MicrosoftEdge AppX registration is
+        forcibly removed. After confirmed browser removal it unregisters allowlisted Edge Update
+        tasks. SkipEdge disables the entire Edge sequence.
         The command does not explicitly delete OneDrive folder contents.
 
     .PARAMETER KeepApp
@@ -1447,8 +1773,8 @@ function Invoke-CleanMsProducts {
         Also removes new/consumer Teams packages and dynamically discovered Teams Meeting Add-ins.
 
     .PARAMETER SkipEdge
-        Skips the force-uninstall attempt, deep-removal fallbacks, Edge Update task cleanup,
-        and Edge reinstall-prevention policy values.
+        Skips machine-wide and per-user force-uninstall attempts, the legacy Edge AppX cleanup,
+        deep-removal fallbacks, Edge Update task cleanup, and Edge reinstall-prevention values.
     #>
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
     param(
