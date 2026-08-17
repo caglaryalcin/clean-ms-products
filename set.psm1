@@ -90,9 +90,28 @@ function Add-CleanMsResult {
         })
 }
 
+$script:CleanMsStepActive = $false
+
+function Complete-CleanMsStep {
+    if (-not $script:CleanMsStepActive) {
+        return
+    }
+
+    Write-Host '[DONE]' -ForegroundColor Green -BackgroundColor Black
+    $script:CleanMsStepActive = $false
+}
+
 function Write-CleanMsStep {
     param([Parameter(Mandatory = $true)][string]$Message)
-    Write-Host "`n$Message" -ForegroundColor Cyan
+
+    Complete-CleanMsStep
+    Write-Host $Message -NoNewline
+    $script:CleanMsStepActive = $true
+}
+
+function Write-CleanMsWarning {
+    param([Parameter(Mandatory = $true)][string]$Message)
+    Write-Host "[WARNING] $Message" -ForegroundColor Red -BackgroundColor Black
 }
 
 function Test-CleanMsNameMatch {
@@ -156,7 +175,7 @@ function Set-CleanMsRegistryDword {
         }
     }
     catch {
-        Write-Warning "Could not read $target. $($_.Exception.Message)"
+        Write-CleanMsWarning "Could not read $target. $($_.Exception.Message)"
         Add-CleanMsResult -ResultList $ResultList -Step $Step -Target $target -Status Failed -Detail $_.Exception.Message
         return 'Failed'
     }
@@ -186,7 +205,7 @@ function Set-CleanMsRegistryDword {
         return 'Changed'
     }
     catch {
-        Write-Warning "Could not configure $target. $($_.Exception.Message)"
+        Write-CleanMsWarning "Could not configure $target. $($_.Exception.Message)"
         Add-CleanMsResult -ResultList $ResultList -Step $Step -Target $target -Status Failed -Detail $_.Exception.Message
         return 'Failed'
     }
@@ -223,7 +242,7 @@ function Remove-CleanMsAppxPackages {
             })
     }
     catch {
-        Write-Warning "Could not enumerate installed AppX packages. $($_.Exception.Message)"
+        Write-CleanMsWarning "Could not enumerate installed AppX packages. $($_.Exception.Message)"
         Add-CleanMsResult -ResultList $ResultList -Step $Step -Target 'Installed AppX inventory' -Status Failed -Detail $_.Exception.Message
         return
     }
@@ -249,7 +268,7 @@ function Remove-CleanMsAppxPackages {
             Add-CleanMsResult -ResultList $ResultList -Step $Step -Target $package.PackageFullName -Status Changed -Detail 'Removed from existing user profiles.'
         }
         catch {
-            Write-Warning "Could not remove AppX package $($package.Name). $($_.Exception.Message)"
+            Write-CleanMsWarning "Could not remove AppX package $($package.Name). $($_.Exception.Message)"
             Add-CleanMsResult -ResultList $ResultList -Step $Step -Target $package.PackageFullName -Status Failed -Detail $_.Exception.Message
         }
     }
@@ -262,7 +281,7 @@ function Remove-CleanMsAppxPackages {
             })
     }
     catch {
-        Write-Warning "Could not enumerate provisioned AppX packages. $($_.Exception.Message)"
+        Write-CleanMsWarning "Could not enumerate provisioned AppX packages. $($_.Exception.Message)"
         Add-CleanMsResult -ResultList $ResultList -Step $Step -Target 'Provisioned AppX inventory' -Status Failed -Detail $_.Exception.Message
         $provisionedPackages = @()
     }
@@ -279,7 +298,7 @@ function Remove-CleanMsAppxPackages {
             Add-CleanMsResult -ResultList $ResultList -Step $Step -Target $package.PackageName -Status Changed -Detail 'Removed from the provisioning layer.'
         }
         catch {
-            Write-Warning "Could not deprovision AppX package $($package.DisplayName). $($_.Exception.Message)"
+            Write-CleanMsWarning "Could not deprovision AppX package $($package.DisplayName). $($_.Exception.Message)"
             Add-CleanMsResult -ResultList $ResultList -Step $Step -Target $package.PackageName -Status Failed -Detail $_.Exception.Message
         }
     }
@@ -305,7 +324,7 @@ function Remove-CleanMsOptionalFeatures {
         $features = @(Get-WindowsOptionalFeature -Online -ErrorAction Stop)
     }
     catch {
-        Write-Warning "Could not enumerate optional Windows features. $($_.Exception.Message)"
+        Write-CleanMsWarning "Could not enumerate optional Windows features. $($_.Exception.Message)"
         Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Windows optional feature inventory' -Status Failed -Detail $_.Exception.Message
         $features = @()
     }
@@ -328,7 +347,7 @@ function Remove-CleanMsOptionalFeatures {
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target $featureName -Status Changed -Detail "RestartNeeded=$($result.RestartNeeded)"
         }
         catch {
-            Write-Warning "Could not disable optional feature $featureName. $($_.Exception.Message)"
+            Write-CleanMsWarning "Could not disable optional feature $featureName. $($_.Exception.Message)"
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target $featureName -Status Failed -Detail $_.Exception.Message
         }
     }
@@ -340,7 +359,7 @@ function Remove-CleanMsOptionalFeatures {
             })
     }
     catch {
-        Write-Warning "Could not enumerate Windows capabilities. $($_.Exception.Message)"
+        Write-CleanMsWarning "Could not enumerate Windows capabilities. $($_.Exception.Message)"
         Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Windows capability inventory' -Status Failed -Detail $_.Exception.Message
         $capabilities = @()
     }
@@ -357,7 +376,7 @@ function Remove-CleanMsOptionalFeatures {
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target $capability.Name -Status Changed -Detail "RestartNeeded=$($result.RestartNeeded)"
         }
         catch {
-            Write-Warning "Could not remove capability $($capability.Name). $($_.Exception.Message)"
+            Write-CleanMsWarning "Could not remove capability $($capability.Name). $($_.Exception.Message)"
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target $capability.Name -Status Failed -Detail $_.Exception.Message
         }
     }
@@ -376,7 +395,7 @@ function Remove-CleanMsOptionalFeatures {
             })
     }
     catch {
-        Write-Warning "Could not enumerate printers. $($_.Exception.Message)"
+        Write-CleanMsWarning "Could not enumerate printers. $($_.Exception.Message)"
         Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Printer inventory' -Status Failed -Detail $_.Exception.Message
         $printers = @()
     }
@@ -393,7 +412,7 @@ function Remove-CleanMsOptionalFeatures {
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target $printer.Name -Status Changed
         }
         catch {
-            Write-Warning "Could not remove printer $($printer.Name). $($_.Exception.Message)"
+            Write-CleanMsWarning "Could not remove printer $($printer.Name). $($_.Exception.Message)"
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target $printer.Name -Status Failed -Detail $_.Exception.Message
         }
     }
@@ -651,7 +670,7 @@ function Remove-CleanMsTeams {
             Add-CleanMsResult -ResultList $ResultList -Step 'Teams add-in' -Target $target -Status Changed -Detail "ExitCode=$exitCode"
         }
         catch {
-            Write-Warning "Could not uninstall $target. $($_.Exception.Message)"
+            Write-CleanMsWarning "Could not uninstall $target. $($_.Exception.Message)"
             Add-CleanMsResult -ResultList $ResultList -Step 'Teams add-in' -Target $target -Status Failed -Detail $_.Exception.Message
         }
     }
@@ -747,7 +766,7 @@ function Remove-CleanMsOneDrive {
                 Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Microsoft OneDrive' -Status Changed -Detail "ExitCode=$exitCode; OneDrive folder contents were not explicitly deleted."
             }
             catch {
-                Write-Warning "Could not uninstall Microsoft OneDrive. $($_.Exception.Message)"
+                Write-CleanMsWarning "Could not uninstall Microsoft OneDrive. $($_.Exception.Message)"
                 Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Microsoft OneDrive' -Status Failed -Detail $_.Exception.Message
             }
         }
@@ -783,7 +802,7 @@ function Remove-CleanMsOneDrive {
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target $shortcut -Status Changed
         }
         catch {
-            Write-Warning "Could not remove shortcut $shortcut. $($_.Exception.Message)"
+            Write-CleanMsWarning "Could not remove shortcut $shortcut. $($_.Exception.Message)"
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target $shortcut -Status Failed -Detail $_.Exception.Message
         }
     }
@@ -825,7 +844,7 @@ function Invoke-CleanMsWithGlobalMutex {
                 $mutex.ReleaseMutex()
             }
             catch {
-                Write-Warning "Could not release the deep Edge-removal mutex. $($_.Exception.Message)"
+                Write-CleanMsWarning "Could not release the deep Edge-removal mutex. $($_.Exception.Message)"
             }
         }
         if ($null -ne $mutex) {
@@ -1156,7 +1175,7 @@ function Remove-CleanMsEdgeScheduledTasks {
             })
     }
     catch {
-        Write-Warning "Could not enumerate Edge scheduled tasks. $($_.Exception.Message)"
+        Write-CleanMsWarning "Could not enumerate Edge scheduled tasks. $($_.Exception.Message)"
         Add-CleanMsResult -ResultList $ResultList -Step 'Edge scheduled tasks' -Target 'Task Scheduler' -Status Failed -Detail $_.Exception.Message
         return
     }
@@ -1189,7 +1208,7 @@ function Remove-CleanMsEdgeScheduledTasks {
             Add-CleanMsResult -ResultList $ResultList -Step 'Edge scheduled tasks' -Target $target -Status Changed
         }
         catch {
-            Write-Warning "Could not unregister Edge scheduled task $target. $($_.Exception.Message)"
+            Write-CleanMsWarning "Could not unregister Edge scheduled task $target. $($_.Exception.Message)"
             Add-CleanMsResult -ResultList $ResultList -Step 'Edge scheduled tasks' -Target $target -Status Failed -Detail $_.Exception.Message
         }
     }
@@ -1365,11 +1384,11 @@ function Remove-CleanMsEdge {
         }
 
         if ($null -ne $fatalRollbackError) {
-            Write-Warning "Microsoft Edge removal changed temporary system state that could not be fully restored. $fatalRollbackError"
+            Write-CleanMsWarning "Microsoft Edge removal changed temporary system state that could not be fully restored. $fatalRollbackError"
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Microsoft Edge rollback' -Status Failed -Detail $fatalRollbackError
         }
         elseif ($null -ne $fatalTrustError) {
-            Write-Warning "Microsoft Edge setup trust changed during removal. $fatalTrustError"
+            Write-CleanMsWarning "Microsoft Edge setup trust changed during removal. $fatalTrustError"
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Microsoft Edge setup trust' -Status Failed -Detail $fatalTrustError
         }
         elseif ($remainingBrowserPaths.Count -eq 0) {
@@ -1384,13 +1403,13 @@ function Remove-CleanMsEdge {
             if ($attemptErrors.Count -gt 0) {
                 $detail += " Attempts: $($attemptErrors -join ' | ')"
             }
-            Write-Warning "Could not force-remove Microsoft Edge. $detail"
+            Write-CleanMsWarning "Could not force-remove Microsoft Edge. $detail"
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Microsoft Edge' -Status Failed -Detail $detail
         }
             } | Out-Null
         }
         catch {
-            Write-Warning "Could not start the serialized Edge removal sequence. $($_.Exception.Message)"
+            Write-CleanMsWarning "Could not start the serialized Edge removal sequence. $($_.Exception.Message)"
             Add-CleanMsResult -ResultList $ResultList -Step $step -Target 'Edge deep-removal lock' -Status Failed -Detail $_.Exception.Message
         }
     }
@@ -1484,7 +1503,7 @@ function Invoke-CleanMsProducts {
 
     $dryRun = [bool]$WhatIfPreference
     $results = New-Object System.Collections.ArrayList
-    Write-Host "Clean MS Products on $($os.Caption) (build $($os.BuildNumber))" -ForegroundColor Green
+    $script:CleanMsStepActive = $false
 
     if (-not $SkipApps) {
         Write-CleanMsStep 'Removing selected AppX packages for existing and future users...'
@@ -1524,27 +1543,10 @@ function Invoke-CleanMsProducts {
         Remove-CleanMsEdge -Context $PSCmdlet -ResultList $results -DryRun $dryRun
     }
 
-    $changed = @($results | Where-Object { $_.Status -eq 'Changed' }).Count
-    $planned = @($results | Where-Object { $_.Status -eq 'Planned' }).Count
-    $skipped = @($results | Where-Object { $_.Status -eq 'Skipped' }).Count
-    $restartRequired = @($results | Where-Object { $_.Status -eq 'RestartRequired' }).Count
-    $failed = @($results | Where-Object { $_.Status -eq 'Failed' }).Count
-
-    Write-Host "`nSummary: changed=$changed, planned=$planned, skipped=$skipped, restart-required=$restartRequired, failed=$failed" -ForegroundColor $(if ($failed -gt 0 -or $restartRequired -gt 0) { 'Yellow' } else { 'Green' })
-    if ($failed -gt 0) {
-        Write-Warning 'One or more operations failed. Use -PassThru to inspect the itemized results.'
-    }
+    Complete-CleanMsStep
 
     if ($PassThru) {
         return $results
-    }
-
-    return [pscustomobject]@{
-        Changed = $changed
-        Planned = $planned
-        Skipped = $skipped
-        RestartRequired = $restartRequired
-        Failed  = $failed
     }
 }
 
